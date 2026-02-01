@@ -2,7 +2,8 @@
 <html lang="he" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">    
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' https://api.github.com; object-src 'none';">
     <title>מתקין A-Bloq</title>
     
     <!-- Google Fonts & Material Icons -->
@@ -13,12 +14,12 @@
     <link rel="stylesheet" href="css/styles.css">
 
     <!-- WebADB Library -->
-    <script src="https://cdn.jsdelivr.net/gh/webadb/webadb.js@master/webadb.js"></script>
+    <script src="js/webadb.js"></script>
 </head>
 <body>
 
     <header>
-        <div class="app-title">
+        <div class="app-title" onclick="triggerDevModeSecret()">
             <span class="material-symbols-rounded">security</span>
             מתקין A-Bloq
         </div>
@@ -32,21 +33,31 @@
     </header>
 
     <div class="main-container">
-        
-        <!-- CONTENT PANEL -->
+        <!-- ... [Content Panel content remains exactly the same as original] ... -->
         <div class="content-panel">
 
             <!-- PAGE 0: Welcome -->
             <div id="page-main" class="page active" style="justify-content: center; align-items: center; text-align: center;">
-                <span class="material-symbols-rounded" style="font-size: 80px; color: var(--md-sys-color-primary); margin-bottom: 20px;">android</span>
-                <h2>ברוכים הבאים</h2>
-                <p style="color: var(--md-sys-color-outline); max-width: 400px; margin-bottom: 40px;">
-                    כלי זה יסייע לכם להתקין ולהגדיר את A-Bloq על מכשיר האנדרואיד שלכם בקלות ובמהירות.
-                </p>
-                <button class="btn" onclick="navigateTo('page-adb', 1)">
-                    התחל תהליך
-                    <span class="material-symbols-rounded">arrow_back</span>
-                </button>
+                <div id="page-main-content">
+                    <span class="material-symbols-rounded" style="font-size: 80px; color: var(--md-sys-color-primary); margin-bottom: 20px;">android</span>
+                    <h2>ברוכים הבאים</h2>
+                    <p style="color: var(--md-sys-color-outline); max-width: 400px; margin-bottom: 40px;">
+                        כלי זה יסייע לכם להתקין ולהגדיר את A-Bloq על מכשיר האנדרואיד שלכם בקלות ובמהירות.
+                    </p>
+                    <button class="btn" onclick="navigateTo('page-adb', 1)">
+                        התחל תהליך
+                        <span class="material-symbols-rounded">arrow_back</span>
+                    </button>
+                    <!-- Dev Trigger hidden hint -->
+                    <div style="margin-top:20px; font-size: 0.8rem; color: #333; cursor: pointer;" onclick="window.enableDevMode()">[ Enable Dev Mode ]</div>
+                </div>
+                <div id="compatibility-notice">
+                    <span class="material-symbols-rounded" style="font-size: 80px; color: var(--md-sys-color-error); margin-bottom: 20px;">browser_updated</span>
+                    <h2>דפדפן לא נתמך</h2>
+                    <p style="color: var(--md-sys-color-outline); max-width: 400px; margin-bottom: 40px;">
+                        התקנה זו דורשת תמיכה ב-WebUSB. אנא השתמש בדפדפן עדכני כגון Google Chrome, Microsoft Edge, או Opera.
+                    </p>
+                </div>
             </div>
 
             <!-- PAGE 1: ADB -->
@@ -63,6 +74,10 @@
                     <div class="list-item"><div class="icon">3</div> לחצו 7 פעמים על "מספר Build"</div>
                     <div class="list-item"><div class="icon">4</div> חזרו למערכת -> אפשרויות מפתחים</div>
                     <div class="list-item"><div class="icon">5</div> הפעילו את "ניפוי באגים ב-USB"</div>
+                    <div class="list-item" style="color: var(--md-sys-color-primary);">
+                        <div class="icon" style="background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary);">!</div>
+                        בחלון שיופיע במכשיר, סמנו "אפשר תמיד ממחשב זה" ואשרו.
+                    </div>
                 </div>
 
                 <div class="action-area">
@@ -86,10 +101,12 @@
                     <div>חובה להסיר את כל חשבונות Google/Samsung מהמכשיר זמנית. ניתן להחזיר אותם לאחר ההתקנה.</div>
                 </div>
 
-                <div class="list-item"><div class="icon">1</div> הכנסו להגדרות -> חשבונות וסיסמאות</div>
-                <div class="list-item"><div class="icon">2</div> הסירו את כל החשבונות המופיעים ברשימה</div>
+                <div class="list-item"><div class="icon">1</div> הכנסו להגדרות -> חשבונות וגיבוי -> נהל חשבונות</div>
+                <div class="list-item"><div class="icon">2</div> בחרו כל חשבון והקישו "הסר חשבון"</div>
                 
-                <div style="margin-top: 20px; text-align: center; color: var(--md-sys-color-outline);">
+                <div id="account-list"></div>
+
+                <div style="flex-grow: 1; text-align: center; color: var(--md-sys-color-outline); padding-top: 20px;">
                     ההתקנה תיכשל אם יימצא חשבון פעיל במכשיר.
                 </div>
 
@@ -134,9 +151,7 @@
             <!-- PAGE 4: Install -->
             <div id="page-install" class="page">
                 <h2>התקנה והגדרות</h2>
-                <div class="terminal" id="install-log">
-                    > מוכן להתקנה...
-                </div>
+                <div class="terminal" id="install-log"></div>
 
                 <div class="progress-wrapper" id="install-progress-wrapper" style="display: block;">
                     <div class="progress-fill" id="install-progress-bar"></div>
@@ -153,17 +168,16 @@
             </div>
 
         </div>
+        <!-- ... [End Content Panel] ... -->
 
         <!-- RIGHT PANEL (PHONE) -->
         <div class="phone-panel">
             <div class="phone-frame">
-                <!-- Changed path to Videos/1.mp4 (Capital V) to match directory structure -->
-                <!-- Added ID for JS targeting -->
                 <video id="guide-video" src="Videos/1.mp4" loop muted playsinline></video>
             </div>
             <div class="phone-controls">
                 <button class="btn btn-tonal" onclick="toggleVideo()" style="border-radius: 50%; width: 50px; height: 50px; padding: 0;">
-                    <span class="material-symbols-rounded" id="video-icon">pause</span>
+                    <span class="material-symbols-rounded" id="video-icon">play_arrow</span>
                 </button>
             </div>
             <p style="color: var(--md-sys-color-outline); font-size: 0.9rem;">סרטון הדרכה (ייתכנו שינויים בין דגמים)</p>
@@ -171,11 +185,14 @@
 
     </div>
 
+    <!-- MOCK DEVICE CONTROLLER (Injected via JS, but structure here for reference) -->
+    <!-- See js/app.js for the dynamic insertion of #dev-console -->
+
     <!-- Snackbar for Notifications -->
     <div id="snackbar">הודעה כללית</div>
 
-    <!-- SCRIPTS (Order matters) -->
-    <script src="js/utils.js"></script>
+    <!-- SCRIPTS -->
     <script src="js/app.js"></script>
+    <script src="js/utils.js"></script>
 </body>
 </html>

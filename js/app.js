@@ -4,95 +4,240 @@ const GITHUB_REPO_NAME = "SecureGuardMDM";
 const TARGET_PACKAGE = "com.secureguard.mdm";
 const DEVICE_ADMIN = ".SecureGuardDeviceAdminReceiver";
 
-// --- GLOBAL VARIABLES ---
+// --- GLOBAL STATE ---
 let adb;
 let webusb;
 let apkBlob = null;
-let foundReleaseUrl = null;
+let foundRelease = null; 
 
-// --- DEV MODE ---
+const appState = {
+    adbConnected: false,
+    accountsClean: false,
+    apkDownloaded: false
+};
+
+// --- DEV MODE & MOCK INFRASTRUCTURE ---
 window.DEV_MODE = false;
+let mockResolver = null; // Function to resolve the pending command
+
+// UI Builder for Dev Console
+function initDevConsole() {
+    if(document.getElementById('dev-console')) return;
+
+    const html = `
+    <div id="dev-console">
+        <div class="dev-header">
+            <span>[MOCK DEVICE TERMINAL]</span>
+            <span style="font-size:10px; cursor:pointer;" onclick="document.getElementById('dev-console').style.display='none'">X</span>
+        </div>
+        <div id="dev-log" class="dev-log"></div>
+        <div class="dev-controls">
+            <div class="dev-input-group">
+                <input type="text" id="dev-manual-input" placeholder="Type manual response here...">
+                <button class="dev-btn" onclick="devSendManual()">SEND</button>
+            </div>
+            <div style="font-size:10px; color:#666; margin-bottom:4px;">PRESETS:</div>
+            <div class="dev-scenarios">
+                <button class="dev-btn" onclick="devPreset('success')">CMD Success</button>
+                <button class="dev-btn" onclick="devPreset('model')">Model Info</button>
+                <button class="dev-btn" onclick="devPreset('no_acc')">No Accounts</button>
+                <button class="dev-btn" onclick="devPreset('has_acc')">Has Accounts</button>
+                <button class="dev-btn" onclick="devPreset('install_ok')">Install OK</button>
+                <button class="dev-btn" onclick="devPreset('dpm_ok')">Owner OK</button>
+                <button class="dev-btn" onclick="devPreset('error')">Generic Error</button>
+            </div>
+        </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+    devLog("System initialized. Waiting for connection...");
+}
+
+// Helpers for Dev Console
+function devLog(msg, type = 'info') {
+    const log = document.getElementById('dev-log');
+    if(!log) return;
+    const div = document.createElement('div');
+    div.className = `dev-log-entry ${type}`;
+    div.innerText = msg;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+}
+
+window.devSendManual = function() {
+    const input = document.getElementById('dev-manual-input');
+    if(mockResolver) {
+        devLog(`Manual Response: ${input.value}`, 'resp');
+        mockResolver(input.value);
+        mockResolver = null;
+        input.value = '';
+    } else {
+        devLog("No pending command to respond to.", 'error');
+    }
+}
+
+window.devPreset = function(type) {
+    if(!mockResolver) return;
+    let resp = "";
+    switch(type) {
+        case 'success': resp = "Success"; break;
+        case 'model': resp = "ro.product.model: Pixel 8 Pro (Mock)"; break;
+        case 'no_acc': resp = ""; break; // Empty output for accounts = clean
+        case 'has_acc': resp = "Account {name=test@gmail.com, type=com.google}"; break;
+        case 'install_ok': resp = "Success"; break;
+        case 'dpm_ok': resp = "Success: Device owner set to package " + TARGET_PACKAGE; break;
+        case 'error': resp = "Error: Something went wrong"; break;
+    }
+    devLog(`Preset [${type}]: ${resp}`, 'resp');
+    mockResolver(resp);
+    mockResolver = null;
+}
+
+// MOCK ADB IMPLEMENTATION
+class MockADB {
+    async connectAdb(path) {
+        devLog(`connecting to ${path}...`);
+        return this; // Return self as the 'adb' instance
+    }
+
+    async shell(cmd) {
+        devLog(`$ ${cmd}`, 'cmd');
+        devLog(`Waiting for response...`, 'waiting');
+        
+        // Return a Promise that the UI will resolve
+        const responseText = await new Promise(resolve => {
+            mockResolver = resolve;
+        });
+
+        // Convert string response to WebADB compatible stream
+        const encoder = new TextEncoder();
+        const view = encoder.encode(responseText + "\n");
+        
+        return {
+            read: async function() {
+                if (this.called) return { done: true, value: undefined };
+                this.called = true;
+                return { done: false, value: view };
+            },
+            called: false
+        };
+    }
+
+    async sync() {
+        devLog(`> Requesting SYNC service`, 'cmd');
+        return {
+            push: async (file, path, mode, onProgress) => {
+                devLog(`> PUSH ${file.name} to ${path}`, 'cmd');
+                // Simulate progress
+                for(let i=0; i<=100; i+=20) {
+                    await sleep(200);
+                    onProgress(i, 100);
+                    devLog(`Upload: ${i}%`, 'info');
+                }
+                devLog(`> PUSH Complete`, 'resp');
+                return true;
+            },
+            quit: async () => devLog(`> SYNC Closed`, 'info')
+        };
+    }
+}
 
 window.enableDevMode = function() {
     window.DEV_MODE = true;
-    console.log("%c[DEV] Developer Mode Enabled", "color: #00ff00; font-weight: bold;");
-    showToast("Developer Mode Enabled");
+    initDevConsole();
     
-    // Auto-update UI if on update page
+    // Auto-enable update mock
+    foundRelease = { url: "http://mock-url/file.apk" }; 
     const updateInfo = document.getElementById('update-info-text');
-    if(updateInfo && document.getElementById('page-update').classList.contains('active')) {
-        updateInfo.innerHTML = `גרסה חדשה זמינה: <b>v1.0.0-DEV</b>`;
-        document.getElementById('btn-download').disabled = false;
-        foundReleaseUrl = "http://mock-url/file.apk";
-    }
+    if(updateInfo) updateInfo.innerHTML = `גרסה חדשה זמינה: <b>v1.0.0-MOCK</b>`;
+    
+    showToast("Developer Mode & Mock Device Enabled");
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// --- ADB LOGIC ---
+// --- REAL LOGIC (Now cleaner because it relies on the injected object) ---
+
+// --- IMPROVED ERROR MAPPING ---
+const ADB_ERRORS = {
+    "INSTALL_FAILED_ALREADY_EXISTS": "האפליקציה כבר מותקנת. מנסה לעדכן...",
+    "INSTALL_FAILED_INSUFFICIENT_STORAGE": "אין מספיק מקום פנוי במכשיר.",
+    "INSTALL_FAILED_UPDATE_INCOMPATIBLE": "קיימת גרסה קודמת עם חתימה שונה. יש למחוק אותה ידנית.",
+    "Permission denied": "אין הרשאה לביצוע הפעולה. וודא שאישרת 'ניפוי באגים' במכשיר.",
+    "device unauthorized": "המכשיר לא מאושר. בדוק את מסך המכשיר ואשר את החיבור.",
+    "not found": "המכשיר התנתק. בדוק את תקינות הכבל.",
+    "there are already some accounts": "שגיאה: נמצאו חשבונות פעילים. חזור לשלב 2.",
+    "already a device owner": "שגיאה: כבר קיים מנהל מכשיר (Device Owner). יש לבצע איפוס יצרן.",
+};
+
 
 async function connectAdb() {
-    // DEV MODE MOCK
-    if (window.DEV_MODE) {
-        updateStatusBadge('adb-status', `<span class="material-symbols-rounded">developer_mode</span> מחובר: Dev Emulator`, 'success');
-        document.getElementById('btn-connect').style.display = 'none';
-        const nextBtn = document.getElementById('btn-next-adb');
-        nextBtn.style.display = 'inline-flex';
-        nextBtn.disabled = false;
-        showToast("[DEV] Device Connected Simulated");
-        return;
-    }
-
     try {
-        webusb = await Adb.open("WebUSB");
-        adb = await webusb.connectAdb("host::");
+        if (window.DEV_MODE) {
+            // In Dev Mode, we swap the real ADB library for our Mock Class
+            webusb = new MockADB(); 
+            adb = await webusb.connectAdb("mock::device");
+        } else {
+            webusb = await Adb.open("WebUSB");
+            adb = await webusb.connectAdb("host::");
+        }
+
         if(adb) {
-            let shell = await adb.shell("getprop ro.product.manufacturer");
-            let manufacturer = await readAll(shell);
+            // Note: In dev mode, this shell command will pause waiting for the 'model' preset
+            let shell = await adb.shell("getprop ro.product.model");
+            let model = await readAll(shell);
             
-            updateStatusBadge('adb-status', `<span class="material-symbols-rounded">link</span> מחובר: ${manufacturer.trim()}`, 'success');
+            // Cleanup model string (remove prefix if present from getprop)
+            model = model.replace('ro.product.model:', '').trim();
+            if(!model) model = "Generic Android";
+
+            updateStatusBadge('adb-status', `<span class="material-symbols-rounded">link</span> מחובר: ${model}`, 'success');
             
             document.getElementById('btn-connect').style.display = 'none';
             const nextBtn = document.getElementById('btn-next-adb');
             nextBtn.style.display = 'inline-flex';
             nextBtn.disabled = false;
+            appState.adbConnected = true;
             
             showToast("המכשיר חובר בהצלחה");
         }
     } catch (e) {
         showToast("שגיאה בחיבור: " + e.message);
+        console.error(e);
     }
 }
 
 async function checkAccounts() {
-    // DEV MODE MOCK
-    if (window.DEV_MODE) {
-        updateStatusBadge('account-status', `<span class="material-symbols-rounded">hourglass_top</span> בודק (Simulated)...`, '');
-        await sleep(800);
-        updateStatusBadge('account-status', `<span class="material-symbols-rounded">check_circle</span> מכשיר נקי`, 'success');
-        document.getElementById('btn-next-acc').disabled = false;
-        showToast("[DEV] Accounts Clean Simulated");
-        return;
-    }
+    const accountListDiv = document.getElementById('account-list');
+    accountListDiv.innerHTML = ''; 
 
     if(!adb) { showToast("ADB לא מחובר"); return; }
     
     updateStatusBadge('account-status', `<span class="material-symbols-rounded">hourglass_top</span> בודק...`, '');
     
     try {
+        // In dev mode, use 'no_acc' or 'has_acc' preset
         let s = await adb.shell("dumpsys account");
         let output = await readAll(s);
-        let hasAccounts = output.includes("Account {name=");
-        let countMatch = output.match(/Accounts: (\d+)/);
-        let count = countMatch ? parseInt(countMatch[1]) : -1;
+        
+        const accountRegex = /Account {name=([^,]+), type=([^}]+)}/g;
+        let matches = [...output.matchAll(accountRegex)];
 
-        if (count === 0 || !hasAccounts) {
+        if (matches.length === 0) {
             updateStatusBadge('account-status', `<span class="material-symbols-rounded">check_circle</span> מכשיר נקי`, 'success');
             document.getElementById('btn-next-acc').disabled = false;
+            appState.accountsClean = true;
             showToast("המכשיר מוכן להתקנה");
         } else {
-            updateStatusBadge('account-status', `<span class="material-symbols-rounded">error</span> נמצאו ${count} חשבונות`, 'error');
-            showToast(`נמצאו ${count} חשבונות פעילים. אנא הסר אותם.`);
+            updateStatusBadge('account-status', `<span class="material-symbols-rounded">error</span> נמצאו ${matches.length} חשבונות`, 'error');
+            let listHtml = '<b>חשבונות שיש להסיר:</b><ul>';
+            matches.forEach(match => {
+                listHtml += `<li>${match[1]} (${match[2]})</li>`;
+            });
+            listHtml += '</ul>';
+            accountListDiv.innerHTML = listHtml;
+            document.getElementById('btn-next-acc').disabled = true;
+            appState.accountsClean = false;
+            showToast(`נמצאו ${matches.length} חשבונות פעילים. אנא הסר אותם.`);
         }
     } catch (e) {
         showToast("שגיאה בבדיקה");
@@ -100,42 +245,40 @@ async function checkAccounts() {
     }
 }
 
-// --- UPDATE LOGIC ---
-
 async function checkForUpdates() {
     const infoText = document.getElementById('update-info-text');
     const btn = document.getElementById('btn-download');
     
-    // DEV MODE MOCK
+    // We keep this check simple as it talks to GitHub, not ADB
     if (window.DEV_MODE) {
-        infoText.innerHTML = `גרסה חדשה זמינה: <b>v1.0.0-DEV</b>`;
+        infoText.innerHTML = `גרסה חדשה זמינה: <b>v1.0.0-MOCK</b>`;
         btn.disabled = false;
-        foundReleaseUrl = "http://mock";
+        foundRelease = { url: "http://mock" };
         return;
     }
 
     try {
         const apiUrl = `https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO_NAME}/releases/latest`;
         const response = await fetch(apiUrl);
-        if (!response.ok) throw new Error("No releases");
+        if (!response.ok) throw new Error("Could not fetch releases from GitHub");
         
         const data = await response.json();
         const asset = data.assets.find(a => a.name.endsWith('.apk'));
         
-        if (!asset) throw new Error("No APK asset");
+        if (!asset) throw new Error("No APK asset found in the latest release");
 
-        foundReleaseUrl = asset.browser_download_url;
+        foundRelease = asset;
         infoText.innerHTML = `גרסה חדשה זמינה: <b>${data.tag_name}</b>`;
         btn.disabled = false;
 
     } catch (error) {
         infoText.innerText = "לא נמצאו עדכונים (משתמש בגרסה מובנית).";
-        console.log(error);
+        console.error(error);
     }
 }
 
 async function startDownload() {
-    if (!foundReleaseUrl) return;
+    if (!foundRelease) return;
 
     const btn = document.getElementById('btn-download');
     const bar = document.getElementById('dl-progress-bar');
@@ -146,23 +289,24 @@ async function startDownload() {
     wrapper.style.display = 'block';
     text.innerText = "מוריד...";
 
-    // DEV MODE MOCK
     if (window.DEV_MODE) {
-        for(let i=0; i<=100; i+=5) {
+        for(let i=0; i<=100; i+=10) {
             bar.style.width = i + "%";
             text.innerText = i + "%";
-            await sleep(50);
+            await sleep(100);
         }
-        apkBlob = new Blob(["mock-data"]); // Fake blob
-        text.innerText = "הורדה הושלמה! (DEV)";
+        apkBlob = new Blob(["mock-data"]); 
+        text.innerText = "הורדה הושלמה! (MOCK)";
+        appState.apkDownloaded = true;
         setTimeout(() => navigateTo('page-install', 4), 1000);
         return;
     }
 
     try {
-        const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(foundReleaseUrl);
-        const response = await fetch(proxyUrl);
-        if (!response.ok) throw new Error("Download failed");
+        const response = await fetch(foundRelease.url, {
+            headers: { 'Accept': 'application/octet-stream' }
+        });
+        if (!response.ok) throw new Error(`Download failed: ${response.statusText}`);
 
         const reader = response.body.getReader();
         const contentLength = +response.headers.get('Content-Length');
@@ -176,7 +320,7 @@ async function startDownload() {
             receivedLength += value.length;
             
             if(contentLength) {
-                let pct = Math.floor((receivedLength / contentLength) * 100);
+                let pct = Math.round((receivedLength / contentLength) * 100);
                 bar.style.width = pct + "%";
                 text.innerText = pct + "%";
             }
@@ -184,111 +328,127 @@ async function startDownload() {
 
         apkBlob = new Blob(chunks);
         text.innerText = "הורדה הושלמה!";
+        appState.apkDownloaded = true;
         setTimeout(() => navigateTo('page-install', 4), 1000);
 
     } catch (e) {
         text.innerText = "שגיאה בהורדה";
         showToast(e.message);
         btn.disabled = false;
+        console.error(e);
     }
 }
 
-// --- INSTALL LOGIC ---
+
+/**
+ * Helper to execute shell commands with validation and Hebrew feedback
+ */
+async function executeAdbCommand(command, description) {
+    log(`> ${description}...`, 'info');
+    try {
+        const shell = await adb.shell(command);
+        const response = await readAll(shell);
+        
+        // Android shell often returns error strings even if the command "executes"
+        const lowerRes = response.toLowerCase();
+        
+        // Search for known errors in the response
+        for (const [key, hebrewMsg] of Object.entries(ADB_ERRORS)) {
+            if (response.includes(key)) {
+                throw new Error(hebrewMsg + ` (${key})`);
+            }
+        }
+
+        // Generic failure check (common in pm install)
+        if (lowerRes.includes("failure") || lowerRes.includes("error")) {
+             throw new Error("נכשלה הפעולה: " + response);
+        }
+
+        log(` הצלחה: ${description}`, 'success');
+        return response;
+    } catch (e) {
+        log(` שגיאה ב${description}: ${e.message}`, 'error');
+        throw e; // Rethrow to stop the installation sequence
+    }
+}
 
 async function runInstallation() {
     const btn = document.getElementById('btn-install-start');
+    const logEl = document.getElementById('install-log');
+    logEl.innerHTML = ""; // Clear log
     
-    // DEV MODE MOCK
-    if (window.DEV_MODE) {
-        btn.disabled = true;
-        log("\n> [DEV] Starting installation sequence...");
-        updateProgress(0.1);
-        await sleep(800);
-        
-        log("> [DEV] Pushing APK to /data/local/tmp/app.apk...");
-        updateProgress(0.4);
-        await sleep(800);
-        
-        log("> [DEV] Running PM Install...");
-        updateProgress(0.6);
-        await sleep(1000);
-        log("Success");
-        
-        log("> [DEV] Setting Device Owner...");
-        updateProgress(0.8);
-        await sleep(800);
-        log("Device owner set to package " + TARGET_PACKAGE);
-        
-        updateProgress(1.0);
-        log("> [DEV] Installation Complete!");
-        showToast("[DEV] Installation Complete");
-        return;
-    }
-
-    if(!adb) { showToast("ADB לא מחובר"); return; }
-    
-    if(!apkBlob) {
-        log("> מוריד קובץ התקנה מקומי (Offline)...");
-        try {
-            let resp = await fetch('apk/update.apk');
-            if(!resp.ok) throw new Error("Local file missing");
-            apkBlob = await resp.blob();
-        } catch(e) {
-            log("> שגיאה קריטית: קובץ APK חסר.");
-            return;
-        }
+    if(!adb) { 
+        showToast("ADB לא מחובר"); 
+        return; 
     }
 
     btn.disabled = true;
+    updateProgress(0);
     
     try {
-        updateProgress(0.1);
-        log("> מעביר קובץ למכשיר (/data/local/tmp/app.apk)...");
-        
-        const sync = await adb.sync();
-        const file = new File([apkBlob], "app.apk");
-        await sync.push(file, "/data/local/tmp/app.apk", 0o644);
-        await sync.quit();
-
-        updateProgress(0.4);
-        log("> מתקין APK...");
-        let installCmd = await adb.shell("pm install -r /data/local/tmp/app.apk");
-        let installRes = await readAll(installCmd);
-        log(installRes);
-
-        updateProgress(0.7);
-        log("> מגדיר Device Owner...");
-        let dpmCmd = `dpm set-device-owner ${TARGET_PACKAGE}/${DEVICE_ADMIN}`;
-        let s = await adb.shell(dpmCmd);
-        let dpmRes = await readAll(s);
-        log(dpmRes);
-
-        if (dpmRes.includes("Success") || dpmRes.includes("already set")) {
-            updateProgress(0.9);
-            log("> פותח אפליקציה...");
-            await adb.shell(`am start -n ${TARGET_PACKAGE}/.MainActivity`);
-            updateProgress(1.0);
-            log("> הסתיים בהצלחה!");
-            showToast("ההתקנה הושלמה בהצלחה!");
-        } else {
-            throw new Error("Device Owner Failed: " + dpmRes);
+        // 1. Validate APK
+        if(!apkBlob) {
+            log("> טוען קובץ התקנה...", 'info');
+            const resp = await fetch('apk/update.apk');
+            if(!resp.ok) throw new Error("קובץ ה-APK חסר בשרת.");
+            apkBlob = await resp.blob();
         }
 
+        // 2. Push File
+        log("> מעביר קובץ למכשיר...", 'info');
+        const sync = await adb.sync();
+        const file = new File([apkBlob], "app.apk");
+        
+        await sync.push(file, "/data/local/tmp/app.apk", 0o644, (sent, total) => {
+            updateProgress(0.1 + (sent / total * 0.3));
+        });
+        await sync.quit();
+        log(" הקובץ הועבר בהצלחה.", 'success');
+
+        // 3. Install
+        updateProgress(0.5);
+        await executeAdbCommand(
+            `pm install -r "/data/local/tmp/app.apk"`, 
+            "התקנת אפליקציה"
+        );
+
+        // 4. Set Device Owner
+        updateProgress(0.7);
+        await executeAdbCommand(
+            `dpm set-device-owner ${TARGET_PACKAGE}/${DEVICE_ADMIN}`, 
+            "הגדרת מנהל מערכת"
+        );
+
+        // 5. Launch
+        updateProgress(0.9);
+        await executeAdbCommand(
+            `am start -n ${TARGET_PACKAGE}/.MainActivity`, 
+            "פתיחת אפליקציה"
+        );
+
+        updateProgress(1.0);
+        log("\n הכלי הותקן והוגדר בהצלחה!", 'success');
+        showToast("הסתיים בהצלחה!");
+
     } catch (e) {
-        log("> שגיאה: " + e.message);
-        btn.disabled = false;
+        console.error(e);
+        log(`\n התקנה נעצרה: ${e.message}`, 'error');
         showToast("ההתקנה נכשלה");
+        btn.disabled = false;
     }
 }
 
-// --- STREAM HELPER ---
 async function readAll(stream) {
-    let decoder = new TextDecoder();
+    const decoder = new TextDecoder();
     let res = "";
-    while (true) {
-        const { done, value } = await stream.read();
-        if (done) break;
-        res += decoder.decode(value);
+    try {
+        while (true) {
+            const { done, value } = await stream.read();
+            if (done) break;
+            res += decoder.decode(value);
+        }
+    } catch (e) {
+        console.warn("Stream reading interrupted", e);
     }
-    return res;
+    return res.trim();
 }

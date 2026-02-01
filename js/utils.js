@@ -1,6 +1,16 @@
 /* --- UI HELPER FUNCTIONS --- */
 
 function navigateTo(pageId, stepIndex) {
+    // Pre-flight checks to prevent skipping steps
+    if (stepIndex > 1 && !appState.adbConnected) {
+        showToast("יש לחבר מכשיר תחילה (שלב 1)");
+        return;
+    }
+    if (stepIndex > 2 && !appState.accountsClean) {
+        showToast("יש לוודא שאין חשבונות במכשיר (שלב 2)");
+        return;
+    }
+
     // Hide all pages
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     // Show target page
@@ -9,6 +19,7 @@ function navigateTo(pageId, stepIndex) {
     // Update Stepper
     document.querySelectorAll('.step-dot').forEach((dot, index) => {
         dot.classList.remove('active');
+        dot.classList.remove('completed'); // Reset completed status
         if (index === stepIndex) dot.classList.add('active');
         if (index < stepIndex) dot.classList.add('completed');
     });
@@ -17,16 +28,11 @@ function navigateTo(pageId, stepIndex) {
     const video = document.getElementById('guide-video');
     const icon = document.getElementById('video-icon');
     
-    // Map specific steps to specific videos
-    // Step 1 (ADB) -> Videos/1.mp4
-    // Step 2 (Accounts) -> Videos/2.mp4
     let targetVideo = null;
 
-    if (stepIndex === 1 || stepIndex === 0) {
-        // Use Video 1 for Welcome and ADB steps
+    if (stepIndex <= 1) { // Welcome and ADB
         targetVideo = "Videos/1.mp4";
-    } else if (stepIndex === 2) {
-        // Use Video 2 for Account Removal step
+    } else if (stepIndex === 2) { // Accounts
         targetVideo = "Videos/2.mp4";
     }
 
@@ -36,13 +42,17 @@ function navigateTo(pageId, stepIndex) {
         video.play().catch(e => console.log("Auto-play prevented"));
         icon.innerText = 'pause'; // Reset icon to pause since we are auto-playing
     }
-    // -----------------------------
-
-    // Logic triggers
-    if(pageId === 'page-update' && typeof checkForUpdates === 'function') {
+    
+    // Logic triggers for when a page becomes active
+    if (pageId === 'page-update' && typeof checkForUpdates === 'function') {
         checkForUpdates();
     }
+    if (pageId === 'page-accounts' && typeof checkAccounts === 'function') {
+        // Automatically trigger a check when navigating to this page if ADB is connected
+        if (appState.adbConnected) checkAccounts();
+    }
 }
+
 function showToast(message) {
     const x = document.getElementById("snackbar");
     x.innerText = message;
@@ -73,10 +83,32 @@ function updateProgress(val) {
     if(bar) bar.style.width = (val * 100) + "%";
 }
 
-function log(text) {
+function log(text, type = 'info') {
     const el = document.getElementById('install-log');
     if(el) {
-        el.innerText += text + "\n";
+        const div = document.createElement('div');
+        div.className = `log-entry log-${type}`;
+        
+        // Handle multiline and sanitization
+        const sanitized = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        div.innerHTML = sanitized.replace(/\n/g, '<br>');
+        
+        el.appendChild(div);
         el.scrollTop = el.scrollHeight;
     }
 }
+
+function checkBrowserCompatibility() {
+    if ('usb' in navigator) {
+        // WebUSB is supported
+        return true;
+    }
+    
+    // WebUSB is not supported
+    document.getElementById('page-main-content').style.display = 'none';
+    document.getElementById('compatibility-notice').style.display = 'block';
+    return false;
+}
+
+// Run compatibility check on page load
+document.addEventListener('DOMContentLoaded', checkBrowserCompatibility);
