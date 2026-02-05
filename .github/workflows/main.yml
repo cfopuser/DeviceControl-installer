@@ -21,7 +21,7 @@ jobs:
         run: |
           # Replace 'OWNER/REPO' with the target repository (e.g., 'TeamWin/Team-Win-Recovery-Project')
           # Replace '*.apk' with a more specific pattern if there are multiple APKs
-          gh release download --repo sesese1234/SecureGuardMDM --pattern "*.apk" --clobber --output normal.apk
+          gh release download --repo sesese1234/SecureGuardMDM --pattern "*.apk" --clobber --output apk/normal.apk
 
       - name: Commit and Push if changed
         run: |
