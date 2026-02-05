@@ -1,4 +1,5 @@
 // --- CONFIGURATION ---
+const ENABLE_WEB_UPDATE = false; // Set to true to allow GitHub updates, false to use local APK only
 const GITHUB_USERNAME = "sesese1234"; 
 const GITHUB_REPO_NAME = "SecureGuardMDM"; 
 const TARGET_PACKAGE = "com.secureguard.mdm";
@@ -13,10 +14,11 @@ let foundRelease = null;
 const appState = {
     adbConnected: false,
     accountsClean: false,
-    apkDownloaded: false
+    apkDownloaded: false,
+    disabledPackages: [] // Track disabled packages  
 };
 
-// --- DEV MODE & MOCK INFRASTRUCTURE ---
+// --- DEV MODE
 window.DEV_MODE = false;
 let mockResolver = null; // Function to resolve the pending command
 
@@ -169,6 +171,16 @@ const ADB_ERRORS = {
     "already a device owner": "שגיאה: כבר קיים מנהל מכשיר (Device Owner). יש לבצע איפוס יצרן.",
 };
 
+// --- HELPER: Map Account Type to Package ---
+const ACCOUNT_PKG_MAP = {
+    'com.google': 'com.google.android.gms', // Google Play Services
+    'com.google.work': 'com.google.android.gms',
+    'com.osp.app.signin': 'com.samsung.android.mobileservice', // Samsung Account
+    'com.samsung.android.mobileservice': 'com.samsung.android.mobileservice',
+    'com.whatsapp': 'com.whatsapp',
+    'com.facebook.auth.login': 'com.facebook.katana',
+    'com.facebook.messenger': 'com.facebook.orca'
+};
 
 async function connectAdb() {
     try {
@@ -235,6 +247,103 @@ function getAccountVisuals(type) {
     // Default fallback
     return { label: type, icon: 'account_circle', class: '' };
 }
+
+// --- NEW FUNCTIONS FOR BETA FEATURE ---
+
+function toggleBypassWarning() {
+    const el = document.getElementById('bypass-warning');
+    el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+}
+
+async function runAccountBypass() {
+    if(!adb) return showToast("ADB לא מחובר");
+    
+    // Hide warning box
+    document.getElementById('bypass-warning').style.display = 'none';
+    updateStatusBadge('account-status', 'מבצע השבתת חשבונות...', '');
+    
+    // 1. Get current list of accounts again to be sure
+    try {
+        let s = await adb.shell("cmd account list");
+        let output = await readAll(s);
+        
+        // Fallback
+        if (!output || output.trim().length === 0) {
+            s = await adb.shell("dumpsys account");
+            output = await readAll(s);
+        }
+
+        const accountRegex = /Account\s*\{name=([^,]+),\s*type=([^}]+)\}/gi;
+        let matches = [...output.matchAll(accountRegex)];
+        
+        let processedPackages = new Set();
+        let logMsg = "";
+
+        for (const m of matches) {
+            const type = m[2].trim();
+            
+            // Determine package to disable
+            let pkgToDisable = ACCOUNT_PKG_MAP[type];
+            
+            // Heuristic: if map not found, try to use the type itself if it looks like a package
+            if (!pkgToDisable && type.includes('.')) {
+                pkgToDisable = type; 
+            }
+
+            if (pkgToDisable && !processedPackages.has(pkgToDisable)) {
+                processedPackages.add(pkgToDisable);
+                logMsg += `Disabling ${pkgToDisable}... `;
+                
+                // EXECUTE DISABLE
+                await executeAdbCommand(`pm disable-user --user 0 ${pkgToDisable}`, `השבתת ${pkgToDisable}`);
+                
+                // Track it so we can re-enable later
+                appState.disabledPackages.push(pkgToDisable);
+            }
+        }
+
+        // --- NEW AUTO-PROCEED LOGIC ---
+        if (appState.disabledPackages.length > 0) {
+            showToast(`בוצעה השבתה ל-${appState.disabledPackages.length} רכיבים. ממשיך לעדכון...`);
+            
+            // 1. Force the state to clean so navigateTo allows the transition
+            appState.accountsClean = true; 
+            
+            // 2. Wait a brief moment so the user sees the status change, then navigate
+            setTimeout(() => {
+                navigateTo('page-update', 3);
+            }, 1500); 
+        } else {
+            showToast("לא נמצאו חשבונות מתאימים להשבתה אוטומטית.");
+            checkAccounts(); // Fallback to standard check if nothing was done
+        }
+        
+
+    } catch (e) {
+        console.error(e);
+        showToast("שגיאה בביצוע תהליך אוטומטי");
+        checkAccounts();
+    }
+}
+
+async function restoreAccounts() {
+    if (appState.disabledPackages.length === 0) return;
+
+    log("\n> משחזר חשבונות שהושבתו...", 'info');
+    
+    for (const pkg of appState.disabledPackages) {
+        try {
+            await executeAdbCommand(`pm enable ${pkg}`, `הפעלת ${pkg} מחדש`);
+        } catch (e) {
+            log(` נכשל בהפעלת ${pkg}: ${e.message}`, 'error');
+        }
+    }
+    
+    // Clear list
+    appState.disabledPackages = [];
+    log(" שיחזור חשבונות הסתיים.", 'success');
+}
+
 
 async function checkAccounts() {
     const accountListDiv = document.getElementById('account-list');
@@ -469,10 +578,21 @@ async function runInstallation() {
     try {
         // 1. Validate APK
         if(!apkBlob) {
-            log("> טוען קובץ התקנה...", 'info');
-            const resp = await fetch('apk/update.apk');
-            if(!resp.ok) throw new Error("קובץ ה-APK חסר בשרת.");
-            apkBlob = await resp.blob();
+            if (!ENABLE_WEB_UPDATE) {
+                log("> טוען קובץ התקנה מקומי (Bundled)...", 'info');
+            } else {
+                log("> קובץ לא הורד, טוען קובץ התקנה מקומי כגיבוי...", 'info');
+            }
+
+             // If in Dev Mode, create dummy blob if missing
+            if(window.DEV_MODE && !apkBlob) apkBlob = new Blob(["mock"]);
+
+            if(!apkBlob) {
+                // This fetches the file from the /apk/ directory on your web server
+                const resp = await fetch('apk/update.apk');
+                if(!resp.ok) throw new Error("קובץ ה-APK המקומי (apk/update.apk) חסר.");
+                apkBlob = await resp.blob();
+            }
         }
 
         // 2. Push File
@@ -489,7 +609,7 @@ async function runInstallation() {
         // 3. Install
         updateProgress(0.5);
         await executeAdbCommand(
-            `pm install -r "/data/local/tmp/app.apk"`, 
+            `pm install -r -g "/data/local/tmp/app.apk"`,  // Added -g to grant permissions immediately
             "התקנת אפליקציה"
         );
 
@@ -515,6 +635,12 @@ async function runInstallation() {
         console.error(e);
         log(`\n התקנה נעצרה: ${e.message}`, 'error');
         showToast("ההתקנה נכשלה");
+    } finally {
+        // ALWAYS run restore logic, even if installation failed, 
+        // otherwise user is left with disabled apps.
+        if (appState.disabledPackages.length > 0) {
+            await restoreAccounts();
+        }
         btn.disabled = false;
     }
 }

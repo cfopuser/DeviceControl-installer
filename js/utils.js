@@ -1,12 +1,19 @@
 /* --- UI HELPER FUNCTIONS --- */
 
 function navigateTo(pageId, stepIndex) {
+    // New: If web updates are disabled, skip the 'update' page and jump to 'install'
+    if (typeof ENABLE_WEB_UPDATE !== 'undefined' && !ENABLE_WEB_UPDATE && pageId === 'page-update') {
+        pageId = 'page-install';
+        stepIndex = 4;
+    }
+    
     // Pre-flight checks to prevent skipping steps
-    if (stepIndex > 1 && !appState.adbConnected) {
+    if (stepIndex >= 2 && !appState.adbConnected) {
         showToast("יש לחבר מכשיר תחילה (שלב 1)");
         return;
     }
-    if (stepIndex > 2 && !appState.accountsClean) {
+    // Check accounts if we are trying to go to Update or Install
+    if (stepIndex >= 3 && !appState.accountsClean) {
         showToast("יש לוודא שאין חשבונות במכשיר (שלב 2)");
         return;
     }
@@ -22,6 +29,13 @@ function navigateTo(pageId, stepIndex) {
         dot.classList.remove('completed'); // Reset completed status
         if (index === stepIndex) dot.classList.add('active');
         if (index < stepIndex) dot.classList.add('completed');
+        
+        // New: Hide the "Update" step dot if web updates are disabled
+        if (typeof ENABLE_WEB_UPDATE !== 'undefined' && !ENABLE_WEB_UPDATE && index === 3) {
+            dot.style.display = 'none';
+        } else {
+            dot.style.display = ''; // Ensure it's visible otherwise
+        }
     });
 
     // --- VIDEO SWITCHING LOGIC ---
@@ -31,9 +45,9 @@ function navigateTo(pageId, stepIndex) {
     let targetVideo = null;
 
     if (stepIndex <= 1) { // Welcome and ADB
-        targetVideo = "Videos/1.mp4";
+        targetVideo = "Videos/enable-adb.mp4";
     } else if (stepIndex === 2) { // Accounts
-        targetVideo = "Videos/2.mp4";
+        targetVideo = "Videos/remove-accounts.mp4";
     }
 
     // Only switch if the source is actually changing to prevent flickering

@@ -512,6 +512,28 @@ video {
 
 @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
 
+/* --- Beta / Experimental Styles --- */
+.btn-beta {
+    background: rgba(255, 152, 0, 0.15);
+    color: #FF9800;
+    border: 1px solid rgba(255, 152, 0, 0.5);
+}
+
+.btn-beta:hover {
+    background: rgba(255, 152, 0, 0.25);
+    box-shadow: 0 0 15px rgba(255, 152, 0, 0.2);
+}
+
+.warning-box {
+    border: 1px solid #FF9800;
+    background: rgba(255, 152, 0, 0.05);
+    padding: 15px;
+    border-radius: 8px;
+    margin-top: 15px;
+    font-size: 0.9rem;
+    display: none; /* Hidden by default */
+}
+
 /* Mobile */
 @media (max-width: 900px) {
     .main-container { grid-template-columns: 1fr; padding: 20px; overflow-y: scroll; display: block; }

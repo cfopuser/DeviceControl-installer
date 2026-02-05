@@ -106,6 +106,25 @@
                 
                 <div id="account-list"></div>
 
+                <!-- NEW: Experimental Section -->
+                <div id="bypass-section" style="margin-top: 15px; text-align: center;">
+                    <button class="btn btn-beta" onclick="toggleBypassWarning()">
+                        <span class="material-symbols-rounded">science</span>
+                        נסה הסרה אוטומטית (Beta)
+                    </button>
+                    
+                    <div id="bypass-warning" class="warning-box">
+                        <strong style="display:block; margin-bottom:5px;">⚠️ מצב ניסיוני</strong>
+                        פעולה זו תנסה להשבית זמנית את האפליקציות שמחזיקות את החשבונות (כגון שירותי Google).
+                        <br>זה עלול לגרום לקריסות זמניות במכשיר. האפליקציות יופעלו מחדש אוטומטית בסיום ההתקנה.
+                        <br><br>
+                        <button class="btn btn-tonal" style="font-size: 0.8rem; height: 36px;" onclick="runAccountBypass()">
+                            אני מבין, בצע השבתה זמנית
+                        </button>
+                    </div>
+                </div>
+                <!-- End Experimental Section -->
+
                 <div style="flex-grow: 1; text-align: center; color: var(--md-sys-color-outline); padding-top: 20px;">
                     ההתקנה תיכשל אם יימצא חשבון פעיל במכשיר.
                 </div>
@@ -173,7 +192,7 @@
         <!-- RIGHT PANEL (PHONE) -->
         <div class="phone-panel">
             <div class="phone-frame">
-                <video id="guide-video" src="Videos/1.mp4" loop muted playsinline></video>
+                <video id="guide-video" src="Videos/enable-adb.mp4" loop muted playsinline></video>
             </div>
             <div class="phone-controls">
                 <button class="btn btn-tonal" onclick="toggleVideo()" style="border-radius: 50%; width: 50px; height: 50px; padding: 0;">
