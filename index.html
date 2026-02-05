@@ -190,7 +190,17 @@
         <div class="phone-panel">
             <div class="phone-frame">
                 <video id="guide-video" src="Videos/enable-adb.mp4" loop muted playsinline></video>
+                
+                <!-- NEW: Success Screen (Hidden by default) -->
+                <div id="phone-success-message">
+                    <span class="material-symbols-rounded icon">verified</span>
+                    <div class="text">
+                        תודה שבחרתם ב<br>
+                        <span class="brand">A-Bloq</span>
+                    </div>
+                </div>
             </div>
+            
             <div class="phone-controls">
                 <button class="btn btn-tonal" onclick="toggleVideo()" style="border-radius: 50%; width: 50px; height: 50px; padding: 0;">
                     <span class="material-symbols-rounded" id="video-icon">play_arrow</span>
