@@ -54,6 +54,15 @@ function navigateTo(pageId, stepIndex) {
         }
     }
 
+    if (pageId === 'page-install') {
+        // Auto-run installation when the page is entered
+        setTimeout(() => {
+            if (typeof runInstallation === 'function') {
+                runInstallation();
+            }
+        }, 600); 
+    }
+
 // --- IMPROVED VIDEO SWITCHING LOGIC ---
     const video = document.getElementById('guide-video');
     const icon = document.getElementById('video-icon');

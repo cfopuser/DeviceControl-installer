@@ -55,6 +55,10 @@ header {
     user-select: none;
 }
 
+.app-title:hover {
+    opacity: 0.8;
+}
+
 .stepper {
     display: flex;
     gap: 15px;
