@@ -206,6 +206,36 @@ async function connectAdb() {
     }
 }
 
+/**
+ * Helper to map account types to Icons, Colors, and Readable Names
+ */
+function getAccountVisuals(type) {
+    // Normalize type string
+    const t = type.toLowerCase();
+
+    if (t.includes('google')) {
+        return { label: 'Google Account', icon: 'cloud', class: 'acc-google' };
+    }
+    if (t.includes('samsung') || t.includes('osp')) {
+        return { label: 'Samsung Account', icon: 'smartphone', class: 'acc-samsung' };
+    }
+    if (t.includes('whatsapp')) {
+        return { label: 'WhatsApp', icon: 'chat', class: 'acc-whatsapp' };
+    }
+    if (t.includes('exchange') || t.includes('outlook') || t.includes('office')) {
+        return { label: 'Exchange/Outlook', icon: 'mail', class: 'acc-exchange' };
+    }
+    if (t.includes('telegram')) {
+        return { label: 'Telegram', icon: 'send', class: 'acc-telegram' };
+    }
+    if (t.includes('facebook') || t.includes('meta')) {
+        return { label: 'Facebook', icon: 'thumb_up', class: 'acc-google' }; // Reusing generic class
+    }
+    
+    // Default fallback
+    return { label: type, icon: 'account_circle', class: '' };
+}
+
 async function checkAccounts() {
     const accountListDiv = document.getElementById('account-list');
     accountListDiv.innerHTML = ''; 
@@ -215,45 +245,84 @@ async function checkAccounts() {
     updateStatusBadge('account-status', `<span class="material-symbols-rounded">hourglass_top</span> בודק...`, '');
     
     try {
-        // שימוש בפקודה קלה יותר מ-dumpsys
+        // Attempt 1: 'cmd account list' (Cleaner output on newer Androids)
         let s = await adb.shell("cmd account list");
         let output = await readAll(s);
         
-        // אם הפקודה cmd לא נתמכת (מכשירים ישנים מאוד), ננסה dumpsys כגיבוי
-        if (!output && !window.DEV_MODE) {
+        // Attempt 2: 'dumpsys account' (Fallback for older devices or restricted permissions)
+        if (!output || output.trim().length === 0 || (!output.includes('Account {') && !window.DEV_MODE)) {
+            console.log("Falling back to dumpsys...");
             s = await adb.shell("dumpsys account");
             output = await readAll(s);
         }
 
-        console.log("Accounts output:", output); // לבדיקה בקונסול
+        console.log("Raw Accounts output:", output); 
 
-        // Regex שתופס פורמטים שונים של חשבונות
+        // Improved Regex to capture {name=..., type=...} accurately
+        // Handles spaces after commas and varies formats
         const accountRegex = /Account\s*\{name=([^,]+),\s*type=([^}]+)\}/gi;
         let matches = [...output.matchAll(accountRegex)];
+        
+        // Filter out "duplicate" entries if dumpsys returns multiple sections
+        // We create a Set based on unique "name+type" to avoid showing the same account twice
+        const uniqueAccounts = [];
+        const seen = new Set();
 
-        if (matches.length === 0) {
+        matches.forEach(m => {
+            const name = m[1].trim();
+            const type = m[2].trim();
+            const key = `${name}|${type}`;
+            if(!seen.has(key)) {
+                seen.add(key);
+                uniqueAccounts.push({ name, type });
+            }
+        });
+
+        if (uniqueAccounts.length === 0) {
             updateStatusBadge('account-status', `<span class="material-symbols-rounded">check_circle</span> מכשיר נקי`, 'success');
             document.getElementById('btn-next-acc').disabled = false;
             appState.accountsClean = true;
+            
+            // Show nice "Clean" state in list area
+            accountListDiv.innerHTML = `
+                <div style="text-align:center; padding: 20px; color: #81C784;">
+                    <span class="material-symbols-rounded" style="font-size: 48px;">check_circle_outline</span>
+                    <p>לא נמצאו חשבונות. ניתן להמשיך.</p>
+                </div>`;
+            
             showToast("המכשיר מוכן להתקנה");
         } else {
-            updateStatusBadge('account-status', `<span class="material-symbols-rounded">error</span> נמצאו ${matches.length} חשבונות`, 'error');
+            updateStatusBadge('account-status', `<span class="material-symbols-rounded">error</span> נמצאו ${uniqueAccounts.length} חשבונות`, 'error');
             
-            let listHtml = '<b>יש להסיר את החשבונות הבאים מהגדרות המכשיר:</b><ul style="margin-top:10px;">';
-            matches.forEach(match => {
-                const name = match[1];
-                const type = match[2].split('.').pop(); // מציג רק את סוג החשבון (למשל google)
-                listHtml += `<li><strong>${name}</strong> (${type})</li>`;
+            let cardsHtml = '';
+            
+            uniqueAccounts.forEach(acc => {
+                const visuals = getAccountVisuals(acc.type);
+                
+                cardsHtml += `
+                <div class="account-card ${visuals.class}">
+                    <div class="account-icon-wrapper">
+                        <span class="material-symbols-rounded">${visuals.icon}</span>
+                    </div>
+                    <div class="account-info">
+                        <div class="account-name" title="${acc.name}">${acc.name}</div>
+                        <div class="account-type">
+                            ${visuals.label}
+                            <span style="font-size:0.7em; opacity:0.6;">(${acc.type})</span>
+                        </div>
+                    </div>
+                </div>`;
             });
-            listHtml += '</ul>';
-            
-            accountListDiv.innerHTML = listHtml;
+
+            accountListDiv.innerHTML = cardsHtml;
             document.getElementById('btn-next-acc').disabled = true;
             appState.accountsClean = false;
         }
     } catch (e) {
         showToast("שגיאה בבדיקת חשבונות");
         console.error("Account check error:", e);
+        // Fallback UI for error
+        updateStatusBadge('account-status', `שגיאה בבדיקה`, 'error');
     }
 }
 

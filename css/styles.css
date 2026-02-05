@@ -159,32 +159,88 @@ h2 {
     font-size: 0.9rem;
 }
 
-/* --- Account List --- */
+/* --- New Account List Styles --- */
 #account-list {
     margin-top: 20px;
-    background-color: rgba(183, 28, 28, 0.1);
-    border: 1px solid rgba(229, 115, 115, 0.5);
-    border-radius: 12px;
-    padding: 10px 20px;
-    color: #E57373;
-}
-
-#account-list ul {
-    list-style-type: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    /* Remove old borders/backgrounds if present in previous CSS, 
+       or keep them as a container wrapper */
+    background: transparent; 
+    border: none;
     padding: 0;
-    margin: 0;
 }
 
-#account-list li {
-    padding: 8px 0;
-    font-family: monospace;
+.account-card {
+    display: flex;
+    align-items: center;
+    background: var(--md-sys-color-surface-variant);
+    padding: 12px 16px;
+    border-radius: 12px;
+    border-left: 5px solid var(--md-sys-color-outline);
+    transition: transform 0.2s;
+}
+
+.account-card:hover {
+    transform: translateX(5px);
+}
+
+.account-icon-wrapper {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 15px; /* RTL margin */
+    background: rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+}
+
+.account-icon-wrapper .material-symbols-rounded {
+    font-size: 24px;
+    color: #fff;
+}
+
+.account-info {
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.account-name {
     font-size: 1rem;
-    border-bottom: 1px solid rgba(229, 115, 115, 0.2);
+    font-weight: 500;
+    color: var(--md-sys-color-on-surface);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-#account-list li:last-child {
-    border-bottom: none;
+.account-type {
+    font-size: 0.8rem;
+    color: var(--md-sys-color-outline);
+    display: flex;
+    align-items: center;
+    gap: 5px;
 }
+
+/* Specific Account Brand Colors */
+.acc-google { border-left-color: #4285F4; }
+.acc-google .account-icon-wrapper { background: #4285F4; }
+
+.acc-samsung { border-left-color: #1428A0; }
+.acc-samsung .account-icon-wrapper { background: #1428A0; }
+
+.acc-whatsapp { border-left-color: #25D366; }
+.acc-whatsapp .account-icon-wrapper { background: #25D366; }
+
+.acc-exchange { border-left-color: #0078D4; }
+.acc-exchange .account-icon-wrapper { background: #0078D4; }
+
+.acc-telegram { border-left-color: #24A1DE; }
+.acc-telegram .account-icon-wrapper { background: #24A1DE; }
+
 
 /* --- Right Panel (Phone Frame) --- */
 .phone-panel {
