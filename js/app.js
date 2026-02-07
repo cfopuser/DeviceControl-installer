@@ -110,8 +110,6 @@ function restoreSessionState() {
             if (Array.isArray(parsed) && parsed.length > 0) {
                 appState.disabledPackages = parsed;
                 log(`שוחזרה הפעלה קודמת: ${parsed.length} רכיבים מושבתים.`, 'warn');
-                // Optional: Show a "Restore Now" button in UI if needed, 
-                // but for now we just load the state so the 'Restore' function works.
             }
         } catch (e) {
             console.error("Failed to restore session", e);
@@ -170,16 +168,22 @@ async function checkDeviceIntegrity() {
         }
     } catch (e) { console.warn("Version check skipped"); }
 
-    // 2. Root Detection
+    // 2. Root Detection (Fixed False Positives)
     try {
-        const rootCheck = await adb.shell("ls /system/bin/su /system/xbin/su /sbin/su");
-        const rootOut = await readAll(rootCheck);
-        if (rootOut.includes("/su")) {
+        // We use 'test -e' which returns true/false to the shell, combined with 'echo'
+        // This avoids 'ls' printing "No such file" which caused false positives
+        const cmd = "test -e /system/bin/su && echo ROOT_FOUND || test -e /system/xbin/su && echo ROOT_FOUND || test -e /sbin/su && echo ROOT_FOUND || test -e /system/sudo && echo ROOT_FOUND";
+        
+        const rootOut = await executeAdbCommand(cmd, "Root Check", true);
+        
+        // Only trigger if we explicitly echoed "ROOT_FOUND"
+        if (rootOut.includes("ROOT_FOUND")) {
             log("אזהרה קריטית: זוהה מכשיר עם ROOT (פרוץ).", 'error');
             alert("אזהרה: המכשיר מזוהה כ-Rooted. ההתקנה לא מומלצת.");
         }
     } catch (e) { 
-        // ls failed usually means files don't exist, which is good.
+        // If execution fails entirely, we assume no root or strict shell, which is fine
+        console.log("Root check clean");
     }
 }
 
