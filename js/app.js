@@ -90,70 +90,84 @@ function toggleBypassWarning() {
     el.style.display = (el.style.display === 'block') ? 'none' : 'block';
 }
 
+async function getPackageForAccountType(type) {
+    // Check manual map first for speed/accuracy
+    if (ACCOUNT_PKG_MAP[type]) return ACCOUNT_PKG_MAP[type];
+
+    try {
+        // Query the system for registered authenticators
+        let s = await adb.shell("dumpsys account");
+        let output = await readAll(s);
+        
+        /* 
+           The output contains lines like:
+           Authenticator: type=com.google, ..., package=com.google.android.gms
+           We use a Regex to find the package associated with the specific type
+        */
+        const regex = new RegExp(`Authenticator\\s*{type=${type.replace(/\./g, '\\.')},.*?package=([^\\s,}]+)`, 'i');
+        const match = output.match(regex);
+        
+        if (match && match[1]) {
+            console.log(`Dynamic Discovery: Type ${type} belongs to ${match[1]}`);
+            return match[1];
+        }
+    } catch (e) {
+        console.error("Failed to resolve package dynamically", e);
+    }
+    return null; 
+}
+
+// --- UPDATED BYPASS LOGIC ---
 async function runAccountBypass() {
     if (!adb) return showToast("ADB לא מחובר");
 
-    // Hide warning box
     document.getElementById('bypass-warning').style.display = 'none';
-    updateStatusBadge('account-status', 'מבצע השבתת חשבונות...', '');
+    updateStatusBadge('account-status', 'מבצע השבתה דינמית...', '');
 
-    // 1. Get current list of accounts
     try {
         let s = await adb.shell("cmd account list");
         let output = await readAll(s);
 
-        // Fallback
-        if (!output || output.trim().length === 0) {
-            s = await adb.shell("dumpsys account");
-            output = await readAll(s);
-        }
-
+        // Standard regex to find accounts
         const accountRegex = /Account\s*\{name=([^,]+),\s*type=([^}]+)\}/gi;
         let matches = [...output.matchAll(accountRegex)];
 
         let processedPackages = new Set();
-        let logMsg = "";
 
         for (const m of matches) {
             const type = m[2].trim();
 
-            // Determine package to disable
-            let pkgToDisable = ACCOUNT_PKG_MAP[type];
+            // 1. Try to find the package name dynamically
+            let pkgToDisable = await getPackageForAccountType(type);
 
+            // 2. If dynamic discovery failed, use the type as a fallback 
+            // (Only if it looks like a package name)
             if (!pkgToDisable && type.includes('.')) {
                 pkgToDisable = type;
             }
 
             if (pkgToDisable && !processedPackages.has(pkgToDisable)) {
                 processedPackages.add(pkgToDisable);
-                logMsg += `Disabling ${pkgToDisable}... `;
+                log(`משבית: ${pkgToDisable} (עבור חשבון ${type})... `, 'info');
 
-                // EXECUTE DISABLE
+                // 3. Disable the package
                 await executeAdbCommand(`pm disable-user --user 0 ${pkgToDisable}`, `השבתת ${pkgToDisable}`);
-
-                // Track it so we can re-enable later
                 appState.disabledPackages.push(pkgToDisable);
             }
         }
 
-        // --- AUTO-PROCEED LOGIC ---
         if (appState.disabledPackages.length > 0) {
-            showToast(`בוצעה השבתה ל-${appState.disabledPackages.length} רכיבים. ממשיך להתקנה...`);
-
+            showToast(`הושבתו ${appState.disabledPackages.length} רכיבים באופן דינמי.`);
             appState.accountsClean = true;
-
-            setTimeout(() => {
-                navigateTo('page-update', 3);
-            }, 1500);
+            setTimeout(() => navigateTo('page-update', 3), 1500);
         } else {
-            showToast("לא נמצאו חשבונות מתאימים להשבתה אוטומטית.");
+            showToast("לא נמצאו רכיבים להשבתה.");
             checkAccounts();
         }
 
-
     } catch (e) {
         console.error(e);
-        showToast("שגיאה בביצוע תהליך אוטומטי");
+        showToast("שגיאה בתהליך ההשבתה");
         checkAccounts();
     }
 }
