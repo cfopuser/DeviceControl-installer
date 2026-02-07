@@ -18,7 +18,32 @@ const appState = {
     disabledPackages: [] // Track disabled packages  
 };
 
+// --- PHASE 2: SAFETY LISTS ---
+
+// 1. "No-Fly List": Packages that must NEVER be disabled to prevent bricking
+const PROTECTED_PACKAGES = [
+    'com.android.settings',      
+    'com.android.systemui',      
+    'android',                   
+    'com.google.android.setupwizard',
+    'com.android.phone',
+    'com.android.providers.telephony',
+    TARGET_PACKAGE               
+];
+
+// 2. "Known Offenders": Apps to check for explicitly, even if account list seems empty
+const KNOWN_OFFENDERS = [
+    'com.facebook.katana',
+    'com.facebook.orca',
+    'com.instagram.android',
+    'com.whatsapp',
+    'com.microsoft.office.outlook',
+    'com.google.android.gm',
+    'com.samsung.android.email.provider'
+];
+
 // --- ERROR MAPPING ---
+// Phase 4: Standardized ADB Error Parsing
 const ADB_ERRORS = {
     "INSTALL_FAILED_ALREADY_EXISTS": "האפליקציה כבר מותקנת. מנסה לעדכן...",
     "INSTALL_FAILED_INSUFFICIENT_STORAGE": "אין מספיק מקום פנוי במכשיר.",
@@ -26,22 +51,25 @@ const ADB_ERRORS = {
     "Permission denied": "אין הרשאה לביצוע הפעולה. וודא שאישרת 'ניפוי באגים' במכשיר.",
     "device unauthorized": "המכשיר לא מאושר. בדוק את מסך המכשיר ואשר את החיבור.",
     "not found": "המכשיר התנתק. בדוק את תקינות הכבל.",
-    "there are already some accounts": "שגיאה: נמצאו חשבונות פעילים. חזור לשלב 2.",
+    "there are already some accounts": "שגיאה: נמצאו חשבונות פעילים. חובה להסירם.",
     "already a device owner": "שגיאה: כבר קיים מנהל מכשיר (Device Owner). יש לבצע איפוס יצרן.",
+    "java.lang.IllegalStateException": "שגיאה קריטית (IllegalStateException). ייתכן שחשבון חבוי חוסם את ההגדרה.",
+    "Trying to set the device owner": "שגיאה: הגדרת הבעלים נכשלה. המכשיר אינו 'נקי' מחשבונות."
 };
 
-// --- ACCOUNT MAPPING ---
+// --- ACCOUNT MAPPING (Static Fallback) ---
 const ACCOUNT_PKG_MAP = {
-    'com.google': 'com.google.android.gms', // Google Play Services
+    'com.google': 'com.google.android.gms', 
     'com.google.work': 'com.google.android.gms',
-    'com.osp.app.signin': 'com.samsung.android.mobileservice', // Samsung Account
+    'com.osp.app.signin': 'com.samsung.android.mobileservice', 
     'com.samsung.android.mobileservice': 'com.samsung.android.mobileservice',
     'com.whatsapp': 'com.whatsapp',
     'com.facebook.auth.login': 'com.facebook.katana',
     'com.facebook.messenger': 'com.facebook.orca'
 };
 
-// --- LOGGING HELPER ---
+// --- UTILITIES ---
+
 function log(msg, type = 'info') {
     const logEl = document.getElementById('install-log');
     if (!logEl) return;
@@ -50,6 +78,45 @@ function log(msg, type = 'info') {
     div.innerText = msg;
     logEl.appendChild(div);
     logEl.scrollTop = logEl.scrollHeight;
+}
+
+function showToast(msg) {
+    // Basic toast implementation if not present in HTML/CSS
+    let toast = document.getElementById('toast-notification');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toast-notification';
+        toast.style.cssText = "position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#333; color:white; padding:12px 24px; border-radius:4px; z-index:1000; display:none;";
+        document.body.appendChild(toast);
+    }
+    toast.innerText = msg;
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.display = 'none'; }, 3000);
+}
+
+// Phase 3: Stabilization Delay Helper
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Phase 2: State Persistence
+function saveSessionState() {
+    localStorage.setItem('mdm_disabled_packages', JSON.stringify(appState.disabledPackages));
+}
+
+function restoreSessionState() {
+    const saved = localStorage.getItem('mdm_disabled_packages');
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                appState.disabledPackages = parsed;
+                log(`שוחזרה הפעלה קודמת: ${parsed.length} רכיבים מושבתים.`, 'warn');
+                // Optional: Show a "Restore Now" button in UI if needed, 
+                // but for now we just load the state so the 'Restore' function works.
+            }
+        } catch (e) {
+            console.error("Failed to restore session", e);
+        }
+    }
 }
 
 // --- MAIN CONNECTION LOGIC ---
@@ -61,6 +128,9 @@ async function connectAdb() {
         adb = await webusb.connectAdb("host::");
 
         if (adb) {
+            // Phase 2: Pre-Flight Checks
+            await checkDeviceIntegrity();
+
             let shell = await adb.shell("getprop ro.product.model");
             let model = await readAll(shell);
 
@@ -76,6 +146,9 @@ async function connectAdb() {
             appState.adbConnected = true;
 
             showToast("המכשיר חובר בהצלחה");
+            
+            // Check for previous crash recovery
+            restoreSessionState();
         }
     } catch (e) {
         showToast("שגיאה בחיבור: " + e.message);
@@ -83,7 +156,63 @@ async function connectAdb() {
     }
 }
 
-// --- ACCOUNT MANAGEMENT FUNCTIONS ---
+// Phase 2: Integrity Checks (Root & Android Version)
+async function checkDeviceIntegrity() {
+    log("מבצע בדיקות מקדימות...", 'info');
+
+    // 1. Android Version Check
+    try {
+        const sdkOut = await executeAdbCommand("getprop ro.build.version.sdk", "בדיקת גרסת אנדרואיד", true);
+        const sdkVer = parseInt(sdkOut);
+        if (sdkVer >= 34) { // Android 14+
+            log("אזהרה: מכשיר זה מריץ Android 14+. תהליך הסרת החשבונות עלול להיות קשה יותר.", 'warn');
+            alert("שים לב: מכשיר זה מריץ אנדרואיד 14. ייתכן שיהיה צורך באיפוס מלא ידני אם הכלי לא יצליח.");
+        }
+    } catch (e) { console.warn("Version check skipped"); }
+
+    // 2. Root Detection
+    try {
+        const rootCheck = await adb.shell("ls /system/bin/su /system/xbin/su /sbin/su");
+        const rootOut = await readAll(rootCheck);
+        if (rootOut.includes("/su")) {
+            log("אזהרה קריטית: זוהה מכשיר עם ROOT (פרוץ).", 'error');
+            alert("אזהרה: המכשיר מזוהה כ-Rooted. ההתקנה לא מומלצת.");
+        }
+    } catch (e) { 
+        // ls failed usually means files don't exist, which is good.
+    }
+}
+
+// --- ACCOUNT DETECTION LOGIC ---
+
+// Phase 1: Robust & Dynamic Detection
+
+// Helper to get raw data from multiple sources
+async function getAllAccountData() {
+    let combinedOutput = "";
+    try {
+        // Source 1: User 0 (Primary Profile)
+        combinedOutput += await executeAdbCommand("cmd account list --user 0", "Scan User 0", true) + "\n";
+        // Source 2: General List
+        combinedOutput += await executeAdbCommand("cmd account list", "Scan General", true) + "\n";
+        // Source 3: Deep System Dump
+        combinedOutput += await executeAdbCommand("dumpsys account", "Deep Dump", true) + "\n";
+    } catch (e) {
+        console.warn("Partial scan failure:", e);
+    }
+    return combinedOutput;
+}
+
+// Helper to find package name dynamically from dumpsys text
+function extractPackageFromDumpsys(type, dumpsysOutput) {
+    if (ACCOUNT_PKG_MAP[type]) return ACCOUNT_PKG_MAP[type];
+
+    // Heuristic: "AuthenticatorDescription {type=com.foo.bar}"
+    // We try to find the package defining this account type
+    if (type && type.includes('.')) return type; // Often the type IS the package
+
+    return null;
+}
 
 function toggleBypassWarning() {
     const el = document.getElementById('bypass-warning');
@@ -93,58 +222,85 @@ function toggleBypassWarning() {
 async function runAccountBypass() {
     if (!adb) return showToast("ADB לא מחובר");
 
-    // 1. Define the "No-Fly List" (Packages that must NEVER be disabled)
-    const PROTECTED_PACKAGES = [
-        'com.android.settings',      // The Settings app
-        'com.android.systemui',      // The Status bar and Navigation
-        'android',                   // The Core System
-        'com.google.android.setupwizard',
-        TARGET_PACKAGE               // Your own MDM app!
-    ];
-
     document.getElementById('bypass-warning').style.display = 'none';
     updateStatusBadge('account-status', 'מבצע השבתה...', '');
 
     try {
-        let s = await adb.shell("cmd account list");
-        let output = await readAll(s);
+        // 1. Get Aggregated Data
+        const output = await getAllAccountData();
 
-        const accountRegex = /Account\s*\{name=([^,]+),\s*type=([^}]+)\}/gi;
-        let matches = [...output.matchAll(accountRegex)];
+        // Phase 1: Fuzzy Regex 
+        // Captures: 1=Name(std), 2=Type(std), 3=InsideBrackets, 4=Email
+        const fuzzyRegex = /(?:name=([^\s,]+)[^}]*type=([^\s}]+))|(?:Account\s*\{([^}]+)\})|([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/gi;
+        
+        let matches = [...output.matchAll(fuzzyRegex)];
+        let packagesToDisable = new Set();
 
-        let processedPackages = new Set();
-
+        // 2. Process Regex Matches
         for (const m of matches) {
-            const type = m[2].trim();
-            let pkgToDisable = await getPackageForAccountType(type);
-
-            if (!pkgToDisable && type.includes('.')) {
-                pkgToDisable = type;
+            let type = null;
+            
+            if (m[2]) {
+                type = m[2]; // Standard 'type=...'
+            } else if (m[3]) {
+                // Inside brackets, look for type=
+                const typeMatch = m[3].match(/type=([^,\s]+)/);
+                if (typeMatch) type = typeMatch[1];
+            } else if (m[4]) {
+                // It's an email address, try to infer package or just mark as dirty
+                log(`זוהה דואר אלקטרוני: ${m[4]}`, 'warn');
             }
 
-            if (pkgToDisable && !processedPackages.has(pkgToDisable)) {
-                
-                // --- SAFETY CHECK START ---
-                if (PROTECTED_PACKAGES.includes(pkgToDisable)) {
-                    log(`דילוג על רכיב מערכת קריטי: ${pkgToDisable}`, 'warn');
-                    continue; // Skip this package and go to the next one
-                }
-                // --- SAFETY CHECK END ---
-
-                processedPackages.add(pkgToDisable);
-                log(`משבית: ${pkgToDisable}... `, 'info');
-
-                await executeAdbCommand(`pm disable-user --user 0 ${pkgToDisable}`, `השבתת ${pkgToDisable}`);
-                appState.disabledPackages.push(pkgToDisable);
+            if (type) {
+                let pkg = extractPackageFromDumpsys(type, output);
+                if (pkg) packagesToDisable.add(pkg);
             }
         }
 
-        // ... rest of the auto-proceed logic
-        if (appState.disabledPackages.length > 0) {
-            showToast(`בוצעה השבתה ל-${appState.disabledPackages.length} רכיבים.`);
+        // Phase 3: Check Known Offenders explicitly
+        for (const offender of KNOWN_OFFENDERS) {
+            try {
+                const check = await executeAdbCommand(`pm list packages ${offender}`, `Searching ${offender}`, true);
+                if (check && check.includes(offender)) {
+                    packagesToDisable.add(offender);
+                }
+            } catch (e) {}
+        }
+
+        // 3. Disable Loop with Safety Checks
+        let count = 0;
+        for (const pkg of packagesToDisable) {
+            // Safety Check
+            if (PROTECTED_PACKAGES.some(p => pkg === p || pkg.startsWith(p))) {
+                log(`דילוג על רכיב מוגן: ${pkg}`, 'warn');
+                continue; 
+            }
+
+            // Skip if already handled
+            if (appState.disabledPackages.includes(pkg)) continue;
+
+            log(`משבית: ${pkg}... `, 'info');
+
+            try {
+                await executeAdbCommand(`pm disable-user --user 0 ${pkg}`, `השבתת ${pkg}`);
+                appState.disabledPackages.push(pkg);
+                saveSessionState(); // Phase 2: Persist state immediately
+                count++;
+            } catch (e) {
+                log(` שגיאה בהשבתת ${pkg}`, 'error');
+            }
+        }
+
+        // Phase 3: Stabilization Delay
+        if (count > 0) {
+            log("ממתין להתייצבות המערכת...", 'info');
+            await wait(2000); 
+            
+            showToast(`בוצעה השבתה ל-${count} רכיבים.`);
             appState.accountsClean = true;
             setTimeout(() => navigateTo('page-update', 3), 1500);
         } else {
+            // Re-check to verify clean state
             checkAccounts();
         }
 
@@ -167,12 +323,14 @@ async function restoreAccounts() {
         }
     }
 
-    // Clear list
+    // Clear list and storage
     appState.disabledPackages = [];
+    localStorage.removeItem('mdm_disabled_packages');
     log(" שיחזור חשבונות הסתיים.", 'success');
 }
 
-// --- VISUAL ASSETS ---
+// --- UI VISUALS ---
+
 const ICONS = {
     google: '<svg viewBox="0 0 24 24"><path d="M21.35,11.1H12.18V13.83H18.69C18.36,17.64 15.19,19.27 12.19,19.27C8.36,19.27 5,16.25 5,12C5,7.9 8.2,4.73 12.2,4.73C15.29,4.73 17.1,6.7 17.1,6.7L19,4.72C19,4.72 16.56,2 12.1,2C6.42,2 2.03,6.8 2.03,12C2.03,17.05 6.16,22 12.25,22C17.6,22 21.5,18.33 21.5,12.91C21.5,11.76 21.35,11.1 21.35,11.1V11.1Z" /></svg>',
     samsung: '<svg viewBox="0 0 24 24"><path d="M16.94 13.91C16.82 13.91 16.58 13.91 16.34 13.88C15.93 13.82 15.65 13.72 15.35 13.56L15.42 12.94C15.69 13.09 16.03 13.21 16.39 13.27C16.58 13.3 16.73 13.3 16.8 13.3C17.5 13.3 17.81 12.99 17.81 12.55C17.81 12.08 17.51 11.85 16.64 11.66L16.23 11.58C14.79 11.27 13.92 10.74 13.92 9.7C13.92 8.44 14.94 7.55 16.68 7.55C17.38 7.55 18.06 7.66 18.66 7.89L18.45 8.5C17.96 8.32 17.39 8.21 16.77 8.21C16.14 8.21 15.82 8.5 15.82 8.9C15.82 9.32 16.15 9.54 16.98 9.72L17.38 9.8C18.94 10.14 19.72 10.72 19.72 11.73C19.72 13.11 18.63 13.91 16.94 13.91M11.6 13.84H9.72V7.63H13.68V8.24H11.6V10.35H13.39V10.96H11.6V13.84M22 10.73C22 14.63 17.53 17.8 12 17.8C6.47 17.8 2 14.63 2 10.73C2 6.83 6.47 3.66 12 3.66C17.53 3.66 22 6.83 22 10.73Z" /></svg>',
@@ -210,15 +368,11 @@ async function checkAccounts() {
     bypassBtn.style.display = 'none';
 
     try {
-        let s = await adb.shell("cmd account list");
-        let output = await readAll(s);
-
-        if (!output || output.trim().length === 0) {
-            s = await adb.shell("dumpsys account");
-            output = await readAll(s);
-        }
-
-        const accountRegex = /Account\s*\{name=([^,]+),\s*type=([^}]+)\}/gi;
+        // Use aggregated data for check
+        const output = await getAllAccountData();
+        
+        // Simple regex for display purposes
+        const accountRegex = /(?:name=([^\s,]+)[^}]*type=([^\s}]+))/gi;
         let matches = [...output.matchAll(accountRegex)];
 
         const uniqueAccounts = [];
@@ -357,14 +511,15 @@ async function startDownload() {
 
 // --- INSTALLATION LOGIC ---
 
-async function executeAdbCommand(command, description) {
-    log(`> ${description}...`, 'info');
+async function executeAdbCommand(command, description, silent = false) {
+    if (!silent) log(`> ${description}...`, 'info');
     try {
         const shell = await adb.shell(command);
         const response = await readAll(shell);
 
         const lowerRes = response.toLowerCase();
 
+        // Standardized Error Parsing
         for (const [key, hebrewMsg] of Object.entries(ADB_ERRORS)) {
             if (response.includes(key)) {
                 throw new Error(hebrewMsg + ` (${key})`);
@@ -375,10 +530,10 @@ async function executeAdbCommand(command, description) {
             throw new Error("נכשלה הפעולה: " + response);
         }
 
-        log(` הצלחה: ${description}`, 'success');
+        if (!silent) log(` הצלחה: ${description}`, 'success');
         return response;
     } catch (e) {
-        log(` שגיאה ב${description}: ${e.message}`, 'error');
+        if (!silent) log(` שגיאה ב${description}: ${e.message}`, 'error');
         throw e;
     }
 }
@@ -386,7 +541,7 @@ async function executeAdbCommand(command, description) {
 async function runInstallation() {
     const btn = document.getElementById('btn-install-start');
     const logEl = document.getElementById('install-log');
-    if (logEl) logEl.innerHTML = ""; // Clear log
+    if (logEl) logEl.innerHTML = ""; 
 
     if (!adb) {
         showToast("ADB לא מחובר");
@@ -402,17 +557,25 @@ async function runInstallation() {
         const successMsg = document.getElementById('phone-success-message');
         const controls = document.querySelector('.phone-controls');
         
-        if (vid) {
-            vid.pause();
-            vid.style.display = 'none'; // Hide video element
+        if (vid) { vid.pause(); vid.style.display = 'none'; }
+        if (controls) { controls.style.display = 'none'; }
+        if (successMsg) { successMsg.style.display = 'flex'; document.getElementById('video-info-text').style.display = 'none'; }
+        
+        // Phase 3: Verify Clean State Before Provisioning
+        log("מבצע בדיקת תקינות אחרונה...", 'info');
+        
+        // Check 1: Ensure no Owner exists
+        const ownerCheck = await executeAdbCommand("dpm get-device-owner", "בדיקת בעלות קיימת", true);
+        if (ownerCheck.includes("ComponentInfo") && !ownerCheck.includes(TARGET_PACKAGE)) {
+             throw new Error("כבר קיים מנהל ארגוני אחר על המכשיר. יש לבצע איפוס יצרן.");
         }
-        if (controls) {
-            controls.style.display = 'none'; // Hide play/pause button
+
+        // Check 2: Final Account Check
+        const finalAccCheck = await executeAdbCommand("cmd account list", "בדיקת חשבונות סופית", true);
+        if (finalAccCheck.includes("Account {")) {
+             throw new Error("זוהו חשבונות שחזרו למכשיר. ההתקנה בוטלה כדי למנוע נזק.");
         }
-        if (successMsg) {
-            successMsg.style.display = 'flex'; // Show thank you message
-            document.getElementById('video-info-text').style.display = 'none';
-        }
+
         // 1. Validate APK
         if (!apkBlob) {
             if (!ENABLE_WEB_UPDATE) {
@@ -438,6 +601,8 @@ async function runInstallation() {
         });
         await sync.quit();
         log(" הקובץ הועבר בהצלחה.", 'success');
+        
+        await wait(1000); // Stabilization
 
         // 3. Install
         updateProgress(0.5);
@@ -446,19 +611,19 @@ async function runInstallation() {
             "התקנת אפליקציה"
         );
 
+        await wait(2000); // Give Package Manager time to register the app
+
         // 4. Set Device Owner
         updateProgress(0.7);
         await executeAdbCommand(
             `appops set ${TARGET_PACKAGE} WRITE_SETTINGS allow`,
             "הגדרת הרשאות ניהול נוספות"
-
         );
 
         updateProgress(0.8);
         await executeAdbCommand(
             `dpm set-device-owner ${TARGET_PACKAGE}/${DEVICE_ADMIN}`,
             "הגדרת מנהל מערכת"
-
         );
 
         // 5. Launch
@@ -471,7 +636,6 @@ async function runInstallation() {
         updateProgress(1.0);
         log("\n הכלי הותקן והוגדר בהצלחה!", 'success');
         showToast("הסתיים בהצלחה!");
-
         
     } catch (e) {
         console.error(e);
