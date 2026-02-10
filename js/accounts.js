@@ -54,7 +54,10 @@ export async function checkAccounts() {
             listDiv.innerHTML = `<div style="text-align:center; padding:20px; color:#81C784;"><span class="material-symbols-rounded">check_circle</span><p>נקי מחשבונות</p></div>`;
         } else {
             updateStatusBadge('account-status', `נמצאו ${unique.size} חשבונות`, 'error');
+            
+            // Show bypass button (Note: Logic to block SDK 34+ is in the click handler in main.js)
             bypassBtn.style.display = 'inline-flex';
+            
             appState.accountsClean = false;
             document.getElementById('btn-next-acc').disabled = true;
 
@@ -73,6 +76,14 @@ export async function checkAccounts() {
 
 export async function runAccountBypass() {
     if (!appState.adbConnected) return;
+
+    // Double check for Android 14+ just in case the UI check was bypassed
+    if (appState.sdkVersion >= 34) {
+        showToast("פעולה זו חסומה באנדרואיד 14+");
+        document.getElementById('bypass-warning').style.display = 'none';
+        return;
+    }
+
     document.getElementById('bypass-warning').style.display = 'none';
     updateStatusBadge('account-status', 'מבצע השבתה...', '');
 

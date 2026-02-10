@@ -5,7 +5,8 @@ export const appState = {
     apkDownloaded: false,
     disabledPackages: [],
     adbInstance: null,
-    webUsbInstance: null
+    webUsbInstance: null,
+    sdkVersion: 0 // Added to track Android Version
 };
 
 export function saveSessionState() {

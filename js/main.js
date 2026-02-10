@@ -3,7 +3,7 @@ import { navigateTo, toggleVideo, log, showToast } from './ui.js';
 import { connectAdb } from './adb-client.js';
 import { checkAccounts, runAccountBypass } from './accounts.js';
 import { checkForUpdates, startDownload, runInstallation } from './installer.js';
-import { restoreSessionState } from './state.js';
+import { appState, restoreSessionState } from './state.js';
 
 // 1. ATTACH TO WINDOW IMMEDIATELY
 window.navigateTo = navigateTo;
@@ -13,7 +13,15 @@ window.checkAccounts = checkAccounts;
 window.runAccountBypass = runAccountBypass;
 window.startDownload = startDownload;
 window.runInstallation = runInstallation;
+
+// Handle the "Install without removal" button click
 window.toggleBypassWarning = () => {
+    // Check for Android 14+ (SDK 34)
+    if (appState.sdkVersion >= 34) {
+        alert("שגיאה: אפשרות זו חסומה ב-Android 14 ומעלה.\n\nבגרסאות אנדרואיד חדשות (14+), גוגל חסמה את האפשרות להשבית חשבונות דרך ADB מטעמי אבטחה.\n\nעליך להסיר את החשבונות באופן ידני דרך הגדרות המכשיר.");
+        return;
+    }
+
     const el = document.getElementById('bypass-warning');
     el.style.display = (el.style.display === 'block') ? 'none' : 'block';
 };

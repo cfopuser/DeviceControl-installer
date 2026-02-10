@@ -49,6 +49,6 @@ export const ADB_ERRORS = {
     "not found": "המכשיר התנתק. בדוק את תקינות הכבל.",
     "there are already some accounts": "שגיאה: נמצאו חשבונות פעילים. חובה להסירם.",
     "already a device owner": "שגיאה: כבר קיים מנהל מכשיר (Device Owner). יש לבצע איפוס יצרן.",
-    "java.lang.IllegalStateException": "שגיאה קריטית (IllegalStateException). ייתכן שחשבון חבוי חוסם את ההגדרה.",
+    "java.lang.IllegalStateException": "שגיאה קריטית (IllegalStateException). חלה תקלה בעת הסרת חשבונות אנא וודאו שכול החשבונות הוסרו מהמכשיר.",
     "Trying to set the device owner": "שגיאה: הגדרת הבעלים נכשלה. המכשיר אינו 'נקי' מחשבונות."
 };

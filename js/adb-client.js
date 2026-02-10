@@ -39,8 +39,10 @@ async function checkDeviceIntegrity() {
     log("מבצע בדיקות מקדימות...", 'info');
     try {
         const sdkOut = await executeAdbCommand("getprop ro.build.version.sdk", "בדיקת גרסת אנדרואיד", true);
-        if (parseInt(sdkOut) >= 34) { 
-            log("אזהרה: Android 14+ זוהה. הסרת חשבונות עלולה להיות קשה.", 'warn');
+        appState.sdkVersion = parseInt(sdkOut); // Store version in state
+
+        if (appState.sdkVersion >= 34) { 
+            log("אזהרה: Android 14+ זוהה. השבתת חשבונות אוטומטית חסומה.", 'warn');
         }
         
         // Root check
