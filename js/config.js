@@ -1,10 +1,9 @@
 export const CONFIG = {
-    ENABLE_WEB_UPDATE: false,
-    GITHUB_USERNAME: "sesese1234",
-    GITHUB_REPO_NAME: "SecureGuardMDM",
-    TARGET_PACKAGE: "com.secureguard.mdm",
-    DEVICE_ADMIN: ".SecureGuardDeviceAdminReceiver",
-    APK_LOCAL_PATH: "apk/normal.apk"
+    ENABLE_WEB_UPDATE: true,
+    REMOTE_APK_URL: "https://devicecontrol-app.github.io/files/DeviceControl.apk",
+    TARGET_PACKAGE: "aiv.diy.control",
+    DEVICE_ADMIN: ".DeviceOwnerReceiver",
+    APK_LOCAL_PATH: "apk/DeviceControl.apk"
 };
 
 // Packages that must NEVER be disabled

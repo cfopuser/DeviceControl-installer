@@ -6,56 +6,69 @@ import { restoreAccounts } from './accounts.js';
 
 let apkBlob = null;
 let foundRelease = null;
-
 export async function checkForUpdates() {
     const infoText = document.getElementById('update-info-text');
     const btn = document.getElementById('btn-download');
 
     try {
-        const resp = await fetch(`https://api.github.com/repos/${CONFIG.GITHUB_USERNAME}/${CONFIG.GITHUB_REPO_NAME}/releases/latest`);
-        if (!resp.ok) throw new Error("GitHub Error");
-        const data = await resp.json();
-        const asset = data.assets.find(a => a.name.endsWith('.apk'));
-        
-        if (asset) {
-            foundRelease = asset;
-            infoText.innerHTML = `גרסה חדשה: <b>${data.tag_name}</b>`;
-            btn.disabled = false;
-        } else { throw new Error("No APK"); }
+        const resp = await fetch(CONFIG.REMOTE_APK_URL, { method: "HEAD" });
+
+        if (!resp.ok) throw new Error("APK not found");
+
+        foundRelease = {
+            url: CONFIG.REMOTE_APK_URL,
+            size: resp.headers.get("Content-Length")
+        };
+
+        infoText.innerHTML = `נמצא APK בשרת`;
+        btn.disabled = false;
+
     } catch (e) {
-        infoText.innerText = "משתמש בגרסה מובנית.";
-        console.error(e);
+        infoText.innerText = "משתמש ב־APK מקומי";
+        foundRelease = null;
+        btn.disabled = true;
     }
 }
 
 export async function startDownload() {
     if (!foundRelease) return;
+
     const btn = document.getElementById('btn-download');
     const bar = document.getElementById('dl-progress-bar');
-    
+
     btn.disabled = true;
     document.getElementById('dl-progress-wrapper').style.display = 'block';
 
     try {
-        const resp = await fetch(foundRelease.url, { headers: { 'Accept': 'application/octet-stream' } });
+        const resp = await fetch(foundRelease.url);
+        if (!resp.ok) throw new Error("Download failed");
+
         const reader = resp.body.getReader();
         const len = +resp.headers.get('Content-Length');
-        let received = 0, chunks = [];
+        let received = 0;
+        let chunks = [];
 
-        while(true) {
-            const {done, value} = await reader.read();
+        while (true) {
+            const { done, value } = await reader.read();
             if (done) break;
+
             chunks.push(value);
             received += value.length;
-            if (len) bar.style.width = Math.round((received/len)*100) + "%";
+
+            if (len) {
+                bar.style.width = Math.round((received / len) * 100) + "%";
+            }
         }
-        
-        apkBlob = new Blob(chunks);
+
+        apkBlob = new Blob(chunks, { type: "application/vnd.android.package-archive" });
         appState.apkDownloaded = true;
+
         setTimeout(() => navigateTo('page-install', 4), 1000);
+
     } catch (e) {
-        showToast("שגיאה בהורדה");
+        showToast("שגיאה בהורדה – משתמש ב־APK מקומי");
         btn.disabled = false;
+        apkBlob = null;
     }
 }
 

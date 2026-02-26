@@ -44,7 +44,7 @@ export async function copyLogToClipboard() {
         logContent += node.innerText + "\n";
     });
 
-    const markdown = `### A-Bloq Installer Report
+    const markdown = `### DeviceControl Installer Report
 **Date:** ${date}
 **Device Status:** ${modelInfo}
 **SDK Version:** ${sdk}

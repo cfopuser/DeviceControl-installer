@@ -1,3 +1,3 @@
-# a-bloq-installer
-a web installer to install a bloq mdm solution,
+# DeviceControl installer
+a web installer to install DeviceControl mdm solution,
 its built to be  a static site on github pages.
